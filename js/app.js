@@ -8,6 +8,7 @@ import {
   createTitleLine,
   effectiveDirections,
   hydrate,
+  rectCorners,
   sampleNotice,
   uid,
 } from "./model.js";
@@ -26,6 +27,8 @@ function init() {
   state = stored || sampleNotice();
   ui = {
     tool: "pan",
+    zoneStyle: "shade",
+    draftZone: null,
     activeDirectionId: state.directions[0]?.id ?? null,
     status: stored ? "" : "Example notice loaded. Edit it, or start a blank one.",
     busy: false,
@@ -48,7 +51,14 @@ function init() {
     onClick: onMapClick,
     onMovePoint: movePoint,
     onDeletePoint: deletePoint,
-    onMoveNote: moveNote,
+    onMoveNoteAnchor: moveNoteAnchor,
+    onMoveNoteLabel: moveNoteLabel,
+    onAddZone: addRectZone,
+    onFinishZone: finishZone,
+    onMoveZoneCorner: moveZoneCorner,
+    onDeleteZonePoint: deleteZonePoint,
+    onMoveDraftPoint: moveDraftPoint,
+    onDeleteDraftPoint: deleteDraftPoint,
     onView: onView,
   });
 
@@ -61,6 +71,7 @@ function init() {
 }
 
 function render() {
+  if (ui.tool !== "zone-poly") ui.draftZone = null;
   if (!state.directions.some((direction) => direction.id === ui.activeDirectionId)) {
     ui.activeDirectionId = state.directions[0]?.id ?? null;
   }
@@ -107,6 +118,9 @@ function syncMap() {
       h: direction.path,
     })),
     notes: state.map.notes,
+    zones: state.map.zones || [],
+    draft: ui.draftZone,
+    zoneStyle: ui.zoneStyle,
     focus: state.map.focusTick,
     fit: state.map.fitTick,
     tool: ui.tool,
@@ -205,6 +219,14 @@ function onClick(event) {
   else if (action === "swatch") updateDirection(button.dataset.id, { color: button.dataset.color });
   else if (action === "note-remove") {
     state = { ...state, map: { ...state.map, notes: state.map.notes.filter((note) => note.id !== button.dataset.id) } };
+  } else if (action === "zone-style") ui.zoneStyle = button.dataset.value === "hazard" ? "hazard" : "shade";
+  else if (action === "zone-look") updateZone(button.dataset.id, { style: button.dataset.value === "hazard" ? "hazard" : "shade" });
+  else if (action === "zone-remove") {
+    state = { ...state, map: { ...state.map, zones: (state.map.zones || []).filter((zone) => zone.id !== button.dataset.id) } };
+  } else if (action === "zone-finish") { finishZone(); return; }
+  else if (action === "zone-cancel") {
+    ui.draftZone = null;
+    ui.status = "Zone cancelled.";
   } else if (action === "photo-clear") state = { ...state, photo: null };
   else if (action === "fit-lines") { fitLines(); return; }
   else return;
@@ -212,13 +234,16 @@ function onClick(event) {
 }
 
 function setTool(tool) {
+  if (tool !== "zone-poly") ui.draftZone = null;
   ui.tool = tool;
   const messages = {
     draw: "Click the map to add corners. Right-click a corner to remove it, then Snap to roads.",
-    work: "Click the map to place the work area. Drag it if it needs to move.",
-    closed: "Click the map where a stop is closed.",
-    temp: "Click the map to place a temporary stop.",
-    label: "Click the map to place a note.",
+    work: "Click the map to place the work area. Drag the dot or the label on their own.",
+    closed: "Click the map where a stop is closed. Drag the dot or the label on their own.",
+    temp: "Click the map to place a temporary stop. Drag the dot or the label on their own.",
+    label: "Click the map to place a note. Drag the dot or the label on their own.",
+    "zone-rect": "Drag on the map to draw a no-go box. Pick Grey or Stripes first. The map stays still while this tool is on.",
+    "zone-poly": "Click the map to add corners. Pick Grey or Stripes, then click the first corner or Finish zone to close it.",
   };
   if (messages[tool]) ui.status = messages[tool];
 }
@@ -328,6 +353,16 @@ function updateNote(id, patch) {
   };
 }
 
+function updateZone(id, patch) {
+  state = {
+    ...state,
+    map: {
+      ...state.map,
+      zones: (state.map.zones || []).map((zone) => zone.id === id ? { ...zone, ...patch } : zone),
+    },
+  };
+}
+
 function replaceNotice(next, message) {
   if (!window.confirm("Replace the notice you’re working on?")) return;
   const focusTick = state.map.focusTick + 1;
@@ -335,6 +370,7 @@ function replaceNotice(next, message) {
   state.map = { ...state.map, focusTick, fitTick: 0 };
   ui.activeDirectionId = state.directions[0]?.id ?? null;
   ui.tool = "pan";
+  ui.draftZone = null;
   ui.status = message;
   mapSig = "";
   render();
@@ -458,7 +494,8 @@ async function snap(id) {
 
 function fitLines() {
   const points = effectiveDirections(state).some((direction) => (direction.path?.length || direction.points?.length || 0) >= 1)
-    || state.map.notes.length > 0;
+    || state.map.notes.length > 0
+    || (state.map.zones || []).length > 0;
   if (!points) {
     ui.status = "There’s nothing on the map to zoom to yet.";
     render();
@@ -469,9 +506,13 @@ function fitLines() {
 }
 
 function onMapClick(lat, lng) {
-  if (ui.busy || ui.tool === "pan" || state.visual !== "map") return;
+  if (ui.busy || ui.tool === "pan" || ui.tool === "zone-rect" || state.visual !== "map") return;
   if (ui.tool === "draw") {
     addPoint(lat, lng);
+    return;
+  }
+  if (ui.tool === "zone-poly") {
+    addZoneCorner(lat, lng);
     return;
   }
   const text = {
@@ -480,8 +521,127 @@ function onMapClick(lat, lng) {
     temp: "Temporary stop",
     label: "Note",
   }[ui.tool] || "Note";
-  const note = { id: uid(), kind: ui.tool, text, lat, lng };
+  const label = labelAbove(lat, lng);
+  const note = {
+    id: uid(),
+    kind: ui.tool,
+    text,
+    lat,
+    lng,
+    labelLat: label.lat,
+    labelLng: label.lng,
+  };
   state = { ...state, map: { ...state.map, notes: [...state.map.notes, note] } };
+  render();
+}
+
+function labelAbove(lat, lng) {
+  const map = getMap();
+  if (!map || !window.L) return { lat: lat + 0.0008, lng };
+  const point = map.latLngToLayerPoint([lat, lng]);
+  const shifted = map.layerPointToLatLng(window.L.point(point.x, point.y - 50));
+  return { lat: shifted.lat, lng: shifted.lng };
+}
+
+function addZoneCorner(lat, lng) {
+  const draft = ui.draftZone?.shape === "polygon" ? ui.draftZone : { shape: "polygon", points: [] };
+  if (draft.points.length >= 3 && nearPoint(draft.points[0], lat, lng, 16)) {
+    addZone("polygon", draft.points);
+    return;
+  }
+  ui.draftZone = { shape: "polygon", points: [...draft.points, { lat, lng }] };
+  const count = ui.draftZone.points.length;
+  ui.status = count >= 3
+    ? "Click the first corner to close the zone, or use Finish zone."
+    : "Click to add corners. Right-click a corner to remove it.";
+  render();
+}
+
+function nearPoint(point, lat, lng, pixels) {
+  const map = getMap();
+  if (!map) return false;
+  const a = map.latLngToContainerPoint([point.lat, point.lng]);
+  const b = map.latLngToContainerPoint([lat, lng]);
+  return Math.hypot(a.x - b.x, a.y - b.y) <= pixels;
+}
+
+function addRectZone(points) {
+  addZone("rect", points);
+}
+
+function finishZone() {
+  const draft = ui.draftZone;
+  if (!draft || draft.points.length < 3) {
+    ui.status = "Add at least 3 corners, then finish the zone.";
+    render();
+    return;
+  }
+  addZone("polygon", draft.points);
+}
+
+function addZone(shape, points) {
+  const zone = {
+    id: uid(),
+    style: ui.zoneStyle === "hazard" ? "hazard" : "shade",
+    shape,
+    points,
+  };
+  ui.draftZone = null;
+  state = { ...state, map: { ...state.map, zones: [...(state.map.zones || []), zone] } };
+  ui.status = shape === "rect"
+    ? "No-go zone added. Drag a corner to resize it."
+    : "No-go zone added. Drag a corner to reshape it. Right-click a corner to remove it.";
+  render();
+}
+
+function moveZoneCorner(id, index, lat, lng) {
+  const zone = (state.map.zones || []).find((item) => item.id === id);
+  if (!zone) return;
+  if (zone.shape === "rect") {
+    const corners = rectCorners(zone.points);
+    const opposite = corners[(index + 2) % 4];
+    if (!opposite) return;
+    updateZone(id, {
+      points: [
+        { lat, lng },
+        { lat: opposite.lat, lng: opposite.lng },
+      ],
+    });
+  } else {
+    updateZone(id, {
+      points: zone.points.map((point, pointIndex) => pointIndex === index ? { lat, lng } : point),
+    });
+  }
+  render();
+}
+
+function deleteZonePoint(id, index) {
+  const zone = (state.map.zones || []).find((item) => item.id === id);
+  if (!zone || zone.shape !== "polygon") return;
+  if (zone.points.length <= 3) {
+    ui.status = "A shape needs at least 3 corners. Remove the zone if you don't want it.";
+    render();
+    return;
+  }
+  updateZone(id, { points: zone.points.filter((_, pointIndex) => pointIndex !== index) });
+  ui.status = "Corner removed.";
+  render();
+}
+
+function moveDraftPoint(index, lat, lng) {
+  if (ui.tool !== "zone-poly" || !ui.draftZone) return;
+  ui.draftZone = {
+    ...ui.draftZone,
+    points: ui.draftZone.points.map((point, pointIndex) => pointIndex === index ? { lat, lng } : point),
+  };
+  render();
+}
+
+function deleteDraftPoint(index) {
+  if (!ui.draftZone) return;
+  const points = ui.draftZone.points.filter((_, pointIndex) => pointIndex !== index);
+  ui.draftZone = points.length ? { ...ui.draftZone, points } : null;
+  ui.status = points.length ? "Corner removed." : "Zone cancelled.";
   render();
 }
 
@@ -520,8 +680,13 @@ function deletePoint(id, index) {
   render();
 }
 
-function moveNote(id, lat, lng) {
+function moveNoteAnchor(id, lat, lng) {
   updateNote(id, { lat, lng });
+  render();
+}
+
+function moveNoteLabel(id, lat, lng) {
+  updateNote(id, { labelLat: lat, labelLng: lng });
   render();
 }
 
@@ -607,6 +772,7 @@ function importNotice(file) {
       state.map = { ...state.map, focusTick, fitTick: 0 };
       ui.activeDirectionId = state.directions[0]?.id ?? null;
       ui.tool = "pan";
+      ui.draftZone = null;
       ui.status = "Opened that notice.";
       mapSig = "";
       render();

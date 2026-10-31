@@ -1,8 +1,9 @@
 import { arrowsAlong } from "./geometry.js";
-import { effectiveDirections } from "./model.js";
+import { effectiveDirections, rectCorners } from "./model.js";
 import { escapeHtml } from "./rich.js";
 
 const L = () => window.L;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 let map = null;
 let layers = null;
@@ -10,6 +11,9 @@ let handlers = {};
 let last = null;
 let seenFocus = null;
 let seenFit = null;
+let rectStart = null;
+let rectLast = null;
+let rectPreview = null;
 
 export function setMapHandlers(next) {
   handlers = next;
@@ -35,6 +39,10 @@ export function ensureMap() {
   layers = L().layerGroup().addTo(map);
 
   map.on("click", (event) => handlers.onClick?.(event.latlng.lat, event.latlng.lng));
+  map.on("mousedown", onRectMouseDown);
+  map.on("mousemove", onRectMouseMove);
+  map.on("mouseup", endRectDrag);
+  window.addEventListener("mouseup", endRectDrag);
   map.on("moveend", () => {
     const center = map.getCenter();
     handlers.onView?.(center.lat, center.lng, map.getZoom());
@@ -52,13 +60,13 @@ export function invalidateMap() {
 
 export function updateMap(notice, ui) {
   if (!ensureMap()) return;
-  syncView(notice);
+  syncView(notice, ui);
   draw(notice, ui);
   last = { notice, ui };
   setTimeout(() => map && map.invalidateSize(), 60);
 }
 
-function syncView(notice) {
+function syncView(notice, ui) {
   if (seenFocus === null) {
     seenFocus = notice.map.focusTick;
     seenFit = notice.map.fitTick;
@@ -71,7 +79,7 @@ function syncView(notice) {
   }
   if (notice.map.fitTick !== seenFit) {
     seenFit = notice.map.fitTick;
-    const points = boundsPoints(notice);
+    const points = boundsPoints(notice, ui);
     if (points.length >= 2) {
       map.fitBounds(L().latLngBounds(points.map((point) => [point.lat, point.lng])), {
         animate: false,
@@ -84,19 +92,36 @@ function syncView(notice) {
   }
 }
 
-function boundsPoints(notice) {
+function boundsPoints(notice, ui) {
   const points = [];
   for (const direction of effectiveDirections(notice)) {
     const line = drawnLine(direction);
     for (const point of line) points.push(point);
   }
-  for (const note of notice.map.notes) points.push(note);
+  for (const note of notice.map.notes || []) {
+    points.push(note);
+    if (Number.isFinite(note.labelLat) && Number.isFinite(note.labelLng)) {
+      points.push({ lat: note.labelLat, lng: note.labelLng });
+    }
+  }
+  for (const zone of notice.map.zones || []) {
+    const corners = zone.shape === "rect" ? rectCorners(zone.points) : zone.points;
+    for (const point of corners) points.push(point);
+  }
+  for (const point of ui?.draftZone?.points || []) points.push(point);
   return points;
 }
 
 function draw(notice, ui) {
+  syncDragging(ui);
   if (!layers) return;
   layers.clearLayers();
+  const editing = ui.tool === "zone-rect" || ui.tool === "zone-poly";
+  for (const zone of notice.map.zones || []) drawZone(zone, editing);
+  if (ui.draftZone?.points?.length) {
+    drawDraft(ui.draftZone, ui.zoneStyle === "hazard" ? "hazard" : "shade");
+  }
+
   const lockedId = notice.mirrorOpposite ? notice.directions[1]?.id : null;
 
   for (const direction of effectiveDirections(notice)) {
@@ -133,6 +158,7 @@ function draw(notice, ui) {
       source.points.forEach((point, index) => {
         const marker = L().marker([point.lat, point.lng], {
           draggable: true,
+          bubblingMouseEvents: false,
           icon: vertexIcon(source.color),
         }).addTo(layers);
         marker.on("click", (event) => L().DomEvent.stopPropagation(event));
@@ -149,51 +175,324 @@ function draw(notice, ui) {
     }
   }
 
-  for (const note of notice.map.notes) drawNote(note);
+  for (const note of notice.map.notes || []) drawNote(note);
   map.getContainer().style.cursor = ui.tool === "pan" ? "" : "crosshair";
 }
 
-function drawNote(note) {
-  if (note.kind === "work") {
-    const marker = L().marker([note.lat, note.lng], {
+function syncDragging(ui) {
+  if (!map) return;
+  const boxing = ui.tool === "zone-rect";
+  if (boxing) {
+    if (map.dragging.enabled()) map.dragging.disable();
+  } else if (!map.dragging.enabled()) {
+    map.dragging.enable();
+  }
+  const shaping = boxing || ui.tool === "zone-poly";
+  if (shaping) {
+    if (map.doubleClickZoom.enabled()) map.doubleClickZoom.disable();
+  } else if (!map.doubleClickZoom.enabled()) {
+    map.doubleClickZoom.enable();
+  }
+}
+
+function drawZone(zone, editing) {
+  const ring = zoneRing(zone);
+  if (ring.length < 3) return;
+  const polygon = L().polygon(ring, zonePathOptions(zone.style)).addTo(layers);
+  if (zone.style === "hazard") ensureHazardPattern();
+  if (!editing) return;
+  const handles = zone.shape === "rect" ? rectCorners(zone.points) : zone.points;
+  handles.forEach((point, index) => {
+    const marker = L().marker([point.lat, point.lng], {
       draggable: true,
-      icon: L().divIcon({
-        className: "plain-icon",
-        html: `<div class="work-flag">${escapeHtml(note.text || "WORK AREA").replaceAll("\n", "<br>")}</div>`,
-        iconSize: [138, 62],
-        iconAnchor: [28, 70],
-      }),
+      bubblingMouseEvents: false,
+      icon: vertexIcon(zone.style === "hazard" ? "#d50000" : "#111"),
     }).addTo(layers);
-    bindNote(marker, note.id);
+    marker.on("click", (event) => L().DomEvent.stopPropagation(event));
+    marker.on("drag", () => {
+      polygon.setLatLngs(movedRing(zone, index, marker.getLatLng()));
+    });
+    marker.on("dragend", () => {
+      const latlng = marker.getLatLng();
+      handlers.onMoveZoneCorner?.(zone.id, index, latlng.lat, latlng.lng);
+    });
+    if (zone.shape === "polygon") {
+      marker.on("contextmenu", (event) => {
+        L().DomEvent.stopPropagation(event);
+        L().DomEvent.preventDefault(event);
+        handlers.onDeleteZonePoint?.(zone.id, index);
+      });
+    }
+  });
+}
+
+function drawDraft(draft, style) {
+  const points = draft.points || [];
+  if (points.length >= 3) {
+    L().polygon(points.map((point) => [point.lat, point.lng]), zonePathOptions(style)).addTo(layers);
+    if (style === "hazard") ensureHazardPattern();
+  } else if (points.length >= 2) {
+    L().polyline(points.map((point) => [point.lat, point.lng]), {
+      color: style === "hazard" ? "#d50000" : "#111",
+      weight: 2,
+      dashArray: "6 4",
+      interactive: false,
+    }).addTo(layers);
+  }
+  points.forEach((point, index) => {
+    const marker = L().marker([point.lat, point.lng], {
+      draggable: true,
+      bubblingMouseEvents: false,
+      icon: vertexIcon(style === "hazard" ? "#d50000" : "#111"),
+    }).addTo(layers);
+    marker.on("click", (event) => {
+      L().DomEvent.stopPropagation(event);
+      if (index === 0 && points.length >= 3) handlers.onFinishZone?.();
+    });
+    marker.on("dragend", () => {
+      const latlng = marker.getLatLng();
+      handlers.onMoveDraftPoint?.(index, latlng.lat, latlng.lng);
+    });
+    marker.on("contextmenu", (event) => {
+      L().DomEvent.stopPropagation(event);
+      L().DomEvent.preventDefault(event);
+      handlers.onDeleteDraftPoint?.(index);
+    });
+  });
+}
+
+function zoneRing(zone) {
+  if (zone.shape === "rect") return rectCorners(zone.points).map((point) => [point.lat, point.lng]);
+  return (zone.points || []).map((point) => [point.lat, point.lng]);
+}
+
+function movedRing(zone, index, latlng) {
+  if (zone.shape === "rect") {
+    const corners = rectCorners(zone.points);
+    const opposite = corners[(index + 2) % 4];
+    return rectCorners([
+      { lat: latlng.lat, lng: latlng.lng },
+      { lat: opposite.lat, lng: opposite.lng },
+    ]).map((point) => [point.lat, point.lng]);
+  }
+  return zone.points.map((point, pointIndex) => (
+    pointIndex === index ? [latlng.lat, latlng.lng] : [point.lat, point.lng]
+  ));
+}
+
+function zonePathOptions(style) {
+  if (style === "hazard") {
+    return {
+      color: "#d50000",
+      weight: 3,
+      opacity: 1,
+      fill: true,
+      fillColor: "url(#nogo-hazard)",
+      fillOpacity: 0.88,
+      interactive: false,
+    };
+  }
+  return {
+    color: "#111",
+    weight: 3,
+    opacity: 1,
+    fillColor: "#6e6e6e",
+    fillOpacity: 0.45,
+    interactive: false,
+  };
+}
+
+function ensureHazardPattern() {
+  const svg = map?.getPanes?.().overlayPane?.querySelector("svg");
+  if (!svg) return;
+  let defs = svg.querySelector("defs");
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, "defs");
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  if (defs.querySelector("#nogo-hazard")) return;
+  const pattern = document.createElementNS(SVG_NS, "pattern");
+  pattern.setAttribute("id", "nogo-hazard");
+  pattern.setAttribute("patternUnits", "userSpaceOnUse");
+  pattern.setAttribute("width", "12");
+  pattern.setAttribute("height", "12");
+  pattern.setAttribute("patternTransform", "rotate(45)");
+  const red = document.createElementNS(SVG_NS, "rect");
+  red.setAttribute("width", "12");
+  red.setAttribute("height", "12");
+  red.setAttribute("fill", "#d50000");
+  const yellow = document.createElementNS(SVG_NS, "rect");
+  yellow.setAttribute("width", "6");
+  yellow.setAttribute("height", "12");
+  yellow.setAttribute("fill", "#ffe14a");
+  pattern.append(red, yellow);
+  defs.append(pattern);
+}
+
+function onRectMouseDown(event) {
+  if (last?.ui?.tool !== "zone-rect") return;
+  if (event.originalEvent?.button !== 0) return;
+  const target = event.originalEvent?.target;
+  if (target instanceof Element && target.closest(".leaflet-marker-icon, .leaflet-control")) return;
+  rectStart = event.latlng;
+  rectLast = event.latlng;
+  if (event.originalEvent) L().DomEvent.preventDefault(event.originalEvent);
+}
+
+function onRectMouseMove(event) {
+  if (!rectStart) return;
+  rectLast = event.latlng;
+  showRectPreview(rectStart, rectLast);
+}
+
+function endRectDrag() {
+  if (!rectStart || !rectLast || !map) {
+    rectStart = null;
+    rectLast = null;
+    clearRectPreview();
     return;
   }
+  const start = rectStart;
+  const end = rectLast;
+  rectStart = null;
+  rectLast = null;
+  clearRectPreview();
+  const a = map.latLngToContainerPoint(start);
+  const b = map.latLngToContainerPoint(end);
+  if (Math.hypot(a.x - b.x, a.y - b.y) < 8) return;
+  handlers.onAddZone?.([
+    { lat: start.lat, lng: start.lng },
+    { lat: end.lat, lng: end.lng },
+  ]);
+}
 
-  const marker = L().marker([note.lat, note.lng], {
+function showRectPreview(start, end) {
+  const style = last?.ui?.zoneStyle === "hazard" ? "hazard" : "shade";
+  const ring = rectCorners([
+    { lat: start.lat, lng: start.lng },
+    { lat: end.lat, lng: end.lng },
+  ]).map((point) => [point.lat, point.lng]);
+  if (!rectPreview) {
+    rectPreview = L().polygon(ring, zonePathOptions(style)).addTo(map);
+  } else {
+    rectPreview.setStyle(zonePathOptions(style));
+    rectPreview.setLatLngs(ring);
+  }
+  if (style === "hazard") ensureHazardPattern();
+}
+
+function clearRectPreview() {
+  if (rectPreview && map) map.removeLayer(rectPreview);
+  rectPreview = null;
+}
+
+function drawNote(note) {
+  const anchor = L().latLng(note.lat, note.lng);
+  const dot = L().marker(anchor, {
     draggable: true,
+    bubblingMouseEvents: false,
     icon: L().divIcon({
       className: "plain-icon",
-      html: `<div class="note-dot ${note.kind}"></div>`,
+      html: `<div class="note-dot ${escapeHtml(note.kind)}"></div>`,
       iconSize: [16, 16],
       iconAnchor: [8, 8],
     }),
   }).addTo(layers);
-  if (note.text.trim()) {
-    marker.bindTooltip(escapeHtml(note.text).replaceAll("\n", "<br>"), {
-      permanent: true,
-      direction: "top",
-      offset: [0, -10],
-      className: "note-tip",
-      opacity: 1,
+
+  const text = (note.text || "").trim();
+  const hasLabel = Number.isFinite(note.labelLat) && Number.isFinite(note.labelLng);
+  if (!text || !hasLabel) {
+    bindDot(dot, note.id, null);
+    return;
+  }
+
+  const label = L().latLng(note.labelLat, note.labelLng);
+  const lines = [
+    L().polyline([label, anchor], { color: "#ffffff", weight: 4, opacity: 0.95, interactive: false }),
+    L().polyline([label, anchor], { color: "#111", weight: 2, opacity: 1, interactive: false }),
+  ];
+  for (const line of lines) line.addTo(layers);
+  const bubble = L().marker(label, {
+    draggable: true,
+    bubblingMouseEvents: false,
+    icon: bubbleIcon(note, note.kind === "work" ? 132 : 96, note.kind === "work" ? 52 : 28),
+  }).addTo(layers);
+  const refresh = () => placeLeader(lines, bubble, dot.getLatLng());
+  bindBubble(bubble, note.id, refresh);
+  bindDot(dot, note.id, refresh);
+  if (!fitBubble(bubble, note)) {
+    requestAnimationFrame(() => {
+      if (!bubble._map) return;
+      fitBubble(bubble, note);
+      refresh();
     });
   }
-  bindNote(marker, note.id);
+  refresh();
 }
 
-function bindNote(marker, id) {
+function bindBubble(marker, id, refresh) {
   marker.on("click", (event) => L().DomEvent.stopPropagation(event));
+  marker.on("drag", refresh);
   marker.on("dragend", () => {
     const latlng = marker.getLatLng();
-    handlers.onMoveNote?.(id, latlng.lat, latlng.lng);
+    handlers.onMoveNoteLabel?.(id, latlng.lat, latlng.lng);
+  });
+}
+
+function bindDot(marker, id, refresh) {
+  marker.on("click", (event) => L().DomEvent.stopPropagation(event));
+  marker.on("drag", () => refresh?.());
+  marker.on("dragend", () => {
+    const latlng = marker.getLatLng();
+    handlers.onMoveNoteAnchor?.(id, latlng.lat, latlng.lng);
+  });
+}
+
+function placeLeader(lines, bubble, anchorLatLng) {
+  if (!map || !bubble?._map || !lines) return;
+  const edge = bubbleEdge(bubble, anchorLatLng);
+  const latlngs = [edge, anchorLatLng];
+  for (const line of lines) {
+    if (line._map) line.setLatLngs(latlngs);
+  }
+}
+
+function bubbleEdge(bubble, anchorLatLng) {
+  const el = bubble.getElement()?.querySelector(".callout, .work-flag");
+  const center = map.latLngToLayerPoint(bubble.getLatLng());
+  const target = map.latLngToLayerPoint(anchorLatLng);
+  if (!el?.offsetWidth || !el.offsetHeight) return map.layerPointToLatLng(center);
+  const halfW = el.offsetWidth / 2;
+  const halfH = el.offsetHeight / 2;
+  const dx = target.x - center.x;
+  const dy = target.y - center.y;
+  const scaleX = Math.abs(dx) < 0.01 ? Infinity : halfW / Math.abs(dx);
+  const scaleY = Math.abs(dy) < 0.01 ? Infinity : halfH / Math.abs(dy);
+  const t = Math.min(1, scaleX, scaleY);
+  return map.layerPointToLatLng(L().point(center.x + dx * t, center.y + dy * t));
+}
+
+function fitBubble(bubble, note) {
+  if (!bubble._map) return false;
+  const el = bubble.getElement()?.querySelector(".callout, .work-flag");
+  if (!el) return false;
+  const width = Math.ceil(el.offsetWidth);
+  const height = Math.ceil(el.offsetHeight);
+  if (width < 2 || height < 2) return false;
+  const size = bubble.options.icon?.options?.iconSize;
+  if (size?.[0] === width && size?.[1] === height) return true;
+  bubble.setIcon(bubbleIcon(note, width, height));
+  return true;
+}
+
+function bubbleIcon(note, width, height) {
+  const text = escapeHtml(note.text || "").replaceAll("\n", "<br>");
+  const cls = note.kind === "work" ? "work-flag" : "callout";
+  return L().divIcon({
+    className: "plain-icon leaflet-div-icon",
+    html: `<div class="${cls}">${text}</div>`,
+    iconSize: [width, height],
+    iconAnchor: [width / 2, height / 2],
   });
 }
 

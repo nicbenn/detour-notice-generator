@@ -584,6 +584,13 @@ button { cursor: pointer; }
 
 .note-dot.temp { background: #2e7d32; }
 
+.note-dot.work {
+  background: #ffe14a;
+  box-shadow: 0 0 0 1px #111;
+}
+
+.note-dot, .work-flag, .callout { cursor: grab; }
+
 .work-flag {
   width: 132px;
   background: #ffe14a;
@@ -593,17 +600,18 @@ button { cursor: pointer; }
   text-align: center;
   padding: 4px 6px 6px;
   box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.3);
-  position: relative;
 }
 
-.work-flag::after {
-  content: "";
-  position: absolute;
-  left: 16px;
-  bottom: -9px;
-  border-width: 9px 7px 0;
-  border-style: solid;
-  border-color: #111 transparent transparent;
+.callout {
+  width: max-content;
+  max-width: 180px;
+  background: #fff;
+  color: #111;
+  border: 1px solid #222;
+  border-radius: 2px;
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.25);
+  font: 700 11px/1.3 Calibri, Candara, sans-serif;
+  padding: 3px 6px;
 }
 
 .leaflet-tooltip.note-tip {

@@ -66,6 +66,7 @@ export function blankNotice() {
       focusTick: 0,
       fitTick: 0,
       notes: [],
+      zones: [],
     },
   };
 }
@@ -179,6 +180,8 @@ export function sampleNotice() {
           text: "PEDDER CRESCENT\nWORK AREA\nROAD CLOSED",
           lat: -34.87615,
           lng: 138.5786,
+          labelLat: -34.87542,
+          labelLng: 138.57735,
         },
         {
           id: uid(),
@@ -186,6 +189,8 @@ export function sampleNotice() {
           text: "Stops 15B (east side)\nPedder Crescent\nClosed",
           lat: -34.87672,
           lng: 138.57905,
+          labelLat: -34.87605,
+          labelLng: 138.5806,
         },
         {
           id: uid(),
@@ -193,8 +198,11 @@ export function sampleNotice() {
           text: "Temporary\nStop (East side)",
           lat: -34.87695,
           lng: 138.57985,
+          labelLat: -34.87758,
+          labelLng: 138.58105,
         },
       ],
+      zones: [],
     },
   };
 }
@@ -259,8 +267,25 @@ export function hydrate(raw) {
       focusTick: 0,
       fitTick: 0,
       notes: Array.isArray(raw.map?.notes) ? raw.map.notes.map(asNote).filter(Boolean) : [],
+      zones: Array.isArray(raw.map?.zones) ? raw.map.zones.map(asZone).filter(Boolean) : [],
     },
   };
+}
+
+export function rectCorners(points) {
+  if (!points?.length) return [];
+  const lats = points.map((point) => point.lat);
+  const lngs = points.map((point) => point.lng);
+  const south = Math.min(...lats);
+  const north = Math.max(...lats);
+  const west = Math.min(...lngs);
+  const east = Math.max(...lngs);
+  return [
+    { lat: south, lng: west },
+    { lat: south, lng: east },
+    { lat: north, lng: east },
+    { lat: north, lng: west },
+  ];
 }
 
 function asBlocks(list, fallback) {
@@ -305,12 +330,31 @@ function asNote(raw) {
   const lng = Number(raw?.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   const kinds = ["work", "closed", "temp", "label"];
+  const labelLat = Number(raw.labelLat);
+  const labelLng = Number(raw.labelLng);
+  const hasLabel = Number.isFinite(labelLat) && Number.isFinite(labelLng);
   return {
     id: raw.id || uid(),
     kind: kinds.includes(raw.kind) ? raw.kind : "label",
     text: String(raw.text || ""),
     lat,
     lng,
+    labelLat: hasLabel ? labelLat : lat + 0.0008,
+    labelLng: hasLabel ? labelLng : lng,
+  };
+}
+
+function asZone(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const points = asPoints(raw.points);
+  const shape = raw.shape === "rect" ? "rect" : "polygon";
+  if (shape === "rect" && points.length < 2) return null;
+  if (shape === "polygon" && points.length < 3) return null;
+  return {
+    id: raw.id || uid(),
+    style: raw.style === "hazard" ? "hazard" : "shade",
+    shape,
+    points: shape === "rect" ? points.slice(0, 2) : points,
   };
 }
 

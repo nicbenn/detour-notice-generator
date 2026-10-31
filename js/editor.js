@@ -142,7 +142,10 @@ function mapTools(notice, shown, ui) {
           ${toolButton("closed", "Closed stop", ui)}
           ${toolButton("temp", "Temporary stop", ui)}
           ${toolButton("label", "Note", ui)}
+          ${toolButton("zone-rect", "No-go box", ui)}
+          ${toolButton("zone-poly", "No-go shape", ui)}
         </div>
+        ${zoneDrawHtml(ui)}
       </div>
       <div>
         <p class="label">Drawing on</p>
@@ -161,14 +164,34 @@ function mapTools(notice, shown, ui) {
       <label class="check"><input type="checkbox" data-action="north" ${notice.showNorth ? "checked" : ""}> North arrow</label>
       <button type="button" class="btn tiny secondary" data-action="fit-lines">Zoom to the lines</button>
       ${notesHtml(notice)}
-      <p class="hint">The map on the notice is the one that prints. Move it until the detour fills the frame. Draw route, then click to drop corners. Right-click a corner to remove it.</p>
+      ${zonesHtml(notice)}
+      <p class="hint">The map on the notice is the one that prints. Move it until the detour fills the frame. Drag a label away from its dot if it sits on a line. No-go box drags a rectangle. No-go shape clicks corners, then closes when you click the first corner again.</p>
     </div>
+  `;
+}
+
+function zoneDrawHtml(ui) {
+  if (ui.tool !== "zone-rect" && ui.tool !== "zone-poly") return "";
+  const draft = ui.tool === "zone-poly" ? ui.draftZone : null;
+  const count = draft?.points?.length || 0;
+  return `
+    <div class="tools" role="group" aria-label="No-go look">
+      <button type="button" class="btn tiny secondary" data-action="zone-style" data-value="shade" aria-pressed="${ui.zoneStyle !== "hazard"}">Grey</button>
+      <button type="button" class="btn tiny secondary" data-action="zone-style" data-value="hazard" aria-pressed="${ui.zoneStyle === "hazard"}">Stripes</button>
+    </div>
+    ${draft ? `
+      <div class="row">
+        <button type="button" class="btn tiny secondary" data-action="zone-finish" ${count >= 3 ? "" : "disabled"}>Finish zone</button>
+        <button type="button" class="btn tiny ghost" data-action="zone-cancel">Cancel zone</button>
+      </div>
+      <p class="hint">${count} corner${count === 1 ? "" : "s"}. ${count >= 3 ? "Click the first corner to close it, or right-click a corner to remove it." : "Click to add corners. Right-click a corner to remove it."}</p>
+    ` : ""}
   `;
 }
 
 function notesHtml(notice) {
   if (!notice.map.notes.length) {
-    return `<p class="hint">Work areas, closed stops, and notes appear when you select that tool and click the map.</p>`;
+    return `<p class="hint">Work areas, closed stops, and notes appear when you select that tool and click the map. Drag the dot and the label separately.</p>`;
   }
   return `
     <div class="stack">
@@ -176,6 +199,26 @@ function notesHtml(notice) {
         <div class="line-block">
           <textarea id="note-${note.id}" data-action="note-text" data-id="${note.id}" rows="2">${escapeHtml(note.text)}</textarea>
           <button type="button" class="btn tiny ghost" data-action="note-remove" data-id="${note.id}">Remove ${noteLabel(note.kind)}</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function zonesHtml(notice) {
+  const zones = notice.map.zones || [];
+  if (!zones.length) return "";
+  return `
+    <div class="stack">
+      <p class="label">No-go zones</p>
+      ${zones.map((zone, index) => `
+        <div class="line-block">
+          <p class="hint">${zone.shape === "rect" ? "Box" : "Shape"} ${index + 1}</p>
+          <div class="tools">
+            <button type="button" class="btn tiny secondary" data-action="zone-look" data-id="${zone.id}" data-value="shade" aria-pressed="${zone.style !== "hazard"}">Grey</button>
+            <button type="button" class="btn tiny secondary" data-action="zone-look" data-id="${zone.id}" data-value="hazard" aria-pressed="${zone.style === "hazard"}">Stripes</button>
+            <button type="button" class="btn tiny ghost" data-action="zone-remove" data-id="${zone.id}">Remove</button>
+          </div>
         </div>
       `).join("")}
     </div>
