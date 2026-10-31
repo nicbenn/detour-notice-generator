@@ -21,7 +21,7 @@ export function editorHtml(notice, ui) {
           ${notice.titleLines.map((line) => `
             <div class="line-row">
               <input id="title-${line.id}" type="text" data-action="title-text" data-id="${line.id}" value="${escapeHtml(line.text)}" autocomplete="off">
-              <label class="check"><input type="checkbox" data-action="title-hl" data-id="${line.id}" ${line.highlight ? "checked" : ""}> Highlight</label>
+              <label class="check fn-hl"><input type="checkbox" data-action="title-hl" data-id="${line.id}" ${line.highlight ? "checked" : ""}> Highlight</label>
               <button type="button" class="btn tiny ghost" data-action="title-remove" data-id="${line.id}">Remove</button>
             </div>
           `).join("")}
@@ -71,7 +71,7 @@ export function editorHtml(notice, ui) {
       <h2><span>4</span> Sign-off</h2>
       <div class="stack">
         ${field("Under the map or picture", `<textarea id="thanks" data-action="thanks" rows="2" placeholder="Thank you for your co-operation.">${escapeHtml(notice.thanks)}</textarea>`)}
-        <label class="check"><input type="checkbox" data-action="thanks-blue" ${notice.thanksBlue ? "checked" : ""}> Blue italic</label>
+        <label class="check fn-blue"><input type="checkbox" data-action="thanks-blue" ${notice.thanksBlue ? "checked" : ""}> Blue italic</label>
         ${field("Date of issue", `<input id="issue-date" type="date" data-action="issue-date" value="${escapeHtml(notice.issueDate)}">`)}
         ${field("Name", `<input id="officer" type="text" data-action="officer" value="${escapeHtml(notice.officer)}" placeholder="Name" autocomplete="off">`)}
         ${field("Role", `<input id="role" type="text" data-action="role" value="${escapeHtml(notice.role)}" placeholder="Regional Field Officer" autocomplete="off">`)}
@@ -122,6 +122,8 @@ function directionCard(notice, shown, direction, index, ui) {
 }
 
 function mapTools(notice, shown, ui) {
+  const drawing = notice.directions.find((direction) => direction.id === ui.activeDirectionId) || notice.directions[0];
+  const line = safeColor(drawing?.color, "#d50000");
   return `
     <div class="prompt">
       <strong>Map the detour each way</strong>
@@ -130,14 +132,14 @@ function mapTools(notice, shown, ui) {
     <div class="stack">
       <div class="find-row">
         ${field("Suburb or area", `<input id="locality" type="text" data-action="locality" value="${escapeHtml(notice.map.locality)}" placeholder="Dudley Park, SA" autocomplete="off">`)}
-        <button type="button" class="btn secondary" data-action="find-area" ${ui.busy ? "disabled" : ""}>Centre map</button>
+        <button type="button" class="btn secondary" data-action="find-area" ${ui.busy || notice.map.locked ? "disabled" : ""}>Centre map</button>
       </div>
       <button type="button" class="btn generate" data-action="generate" ${ui.busy ? "disabled" : ""}>${ui.busy ? "Working…" : "Generate lines and arrows"}</button>
       <div>
         <p class="label">On the map</p>
         <div class="tools" role="group" aria-label="Map tools">
           ${toolButton("pan", "Move", ui)}
-          ${toolButton("draw", "Draw route", ui)}
+          ${toolButton("draw", "Draw route", ui, `--line:${line};--ink:${contrastInk(line)}`)}
           ${toolButton("work", "Work area", ui)}
           ${toolButton("closed", "Closed stop", ui)}
           ${toolButton("temp", "Temporary stop", ui)}
@@ -162,7 +164,9 @@ function mapTools(notice, shown, ui) {
         </div>
       </div>
       <label class="check"><input type="checkbox" data-action="north" ${notice.showNorth ? "checked" : ""}> North arrow</label>
-      <button type="button" class="btn tiny secondary" data-action="fit-lines">Zoom to the lines</button>
+      <label class="check"><input type="checkbox" data-action="lock-map" ${notice.map.locked ? "checked" : ""}> Lock map position</label>
+      <button type="button" class="btn tiny secondary" data-action="fit-drawing" ${notice.map.locked ? "disabled" : ""}>Fit to drawing</button>
+      <p class="hint">${notice.map.locked ? "Zoom and location are fixed. Fitting, centring, generating, and the zoom buttons leave the frame where it is until you unlock it." : "Fit to drawing zooms in on the finished lines, notes, and no-go zones. It stays off while the map position is locked."}</p>
       ${notesHtml(notice)}
       ${zonesHtml(notice)}
       <p class="hint">The map on the notice is the one that prints. Move it until the detour fills the frame. Drag a label away from its dot if it sits on a line. No-go box drags a rectangle. No-go shape clicks corners, then closes when you click the first corner again.</p>
@@ -176,8 +180,8 @@ function zoneDrawHtml(ui) {
   const count = draft?.points?.length || 0;
   return `
     <div class="tools" role="group" aria-label="No-go look">
-      <button type="button" class="btn tiny secondary" data-action="zone-style" data-value="shade" aria-pressed="${ui.zoneStyle !== "hazard"}">Grey</button>
-      <button type="button" class="btn tiny secondary" data-action="zone-style" data-value="hazard" aria-pressed="${ui.zoneStyle === "hazard"}">Stripes</button>
+      <button type="button" class="btn tiny fn fn-shade" data-action="zone-style" data-value="shade" aria-pressed="${ui.zoneStyle !== "hazard"}">Grey</button>
+      <button type="button" class="btn tiny fn fn-hazard" data-action="zone-style" data-value="hazard" aria-pressed="${ui.zoneStyle === "hazard"}"><span>Stripes</span></button>
     </div>
     ${draft ? `
       <div class="row">
@@ -215,8 +219,8 @@ function zonesHtml(notice) {
         <div class="line-block">
           <p class="hint">${zone.shape === "rect" ? "Box" : "Shape"} ${index + 1}</p>
           <div class="tools">
-            <button type="button" class="btn tiny secondary" data-action="zone-look" data-id="${zone.id}" data-value="shade" aria-pressed="${zone.style !== "hazard"}">Grey</button>
-            <button type="button" class="btn tiny secondary" data-action="zone-look" data-id="${zone.id}" data-value="hazard" aria-pressed="${zone.style === "hazard"}">Stripes</button>
+            <button type="button" class="btn tiny fn fn-shade" data-action="zone-look" data-id="${zone.id}" data-value="shade" aria-pressed="${zone.style !== "hazard"}">Grey</button>
+            <button type="button" class="btn tiny fn fn-hazard" data-action="zone-look" data-id="${zone.id}" data-value="hazard" aria-pressed="${zone.style === "hazard"}"><span>Stripes</span></button>
             <button type="button" class="btn tiny ghost" data-action="zone-remove" data-id="${zone.id}">Remove</button>
           </div>
         </div>
@@ -248,8 +252,8 @@ function blocksHtml(group, blocks, bullet) {
     <div class="line-block">
       <textarea id="block-${group}-${block.id}" data-action="block-text" data-group="${group}" data-id="${block.id}" rows="3">${escapeHtml(block.text)}</textarea>
       <div class="row">
-        <label class="check"><input type="checkbox" data-action="block-hl" data-group="${group}" data-id="${block.id}" ${block.highlight ? "checked" : ""}> Highlight</label>
-        <label class="check"><input type="checkbox" data-action="block-ul" data-group="${group}" data-id="${block.id}" ${block.underline ? "checked" : ""}> Underline</label>
+        <label class="check fn-hl"><input type="checkbox" data-action="block-hl" data-group="${group}" data-id="${block.id}" ${block.highlight ? "checked" : ""}> Highlight</label>
+        <label class="check fn-ul"><input type="checkbox" data-action="block-ul" data-group="${group}" data-id="${block.id}" ${block.underline ? "checked" : ""}> Underline</label>
         <label class="check"><input type="checkbox" data-action="block-center" data-group="${group}" data-id="${block.id}" ${block.center ? "checked" : ""}> Centre</label>
         ${bullet ? `<label class="check"><input type="checkbox" data-action="block-bullet" data-group="${group}" data-id="${block.id}" ${block.bullet ? "checked" : ""}> Bullet</label>` : ""}
         <button type="button" class="btn tiny ghost" data-action="block-remove" data-group="${group}" data-id="${block.id}">Remove</button>
@@ -258,8 +262,17 @@ function blocksHtml(group, blocks, bullet) {
   `).join("");
 }
 
-function toolButton(value, label, ui) {
-  return `<button type="button" class="btn tiny secondary" data-action="tool" data-value="${value}" aria-pressed="${ui.tool === value}">${label}</button>`;
+function toolButton(value, label, ui, style = "") {
+  const paint = style ? ` style="${style}"` : "";
+  return `<button type="button" class="btn tiny fn fn-${value}" data-action="tool" data-value="${value}" aria-pressed="${ui.tool === value}"${paint}>${label}</button>`;
+}
+
+function contrastInk(hex) {
+  const n = Number.parseInt(String(hex).replace("#", ""), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#161616" : "#ffffff";
 }
 
 function field(label, control) {

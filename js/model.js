@@ -65,6 +65,7 @@ export function blankNotice() {
       locality: "",
       focusTick: 0,
       fitTick: 0,
+      locked: false,
       notes: [],
       zones: [],
     },
@@ -173,6 +174,7 @@ export function sampleNotice() {
       locality: "Dudley Park, SA",
       focusTick: 0,
       fitTick: 0,
+      locked: false,
       notes: [
         {
           id: uid(),
@@ -266,10 +268,36 @@ export function hydrate(raw) {
       locality: String(raw.map?.locality || ""),
       focusTick: 0,
       fitTick: 0,
+      locked: raw.map?.locked === true,
       notes: Array.isArray(raw.map?.notes) ? raw.map.notes.map(asNote).filter(Boolean) : [],
       zones: Array.isArray(raw.map?.zones) ? raw.map.zones.map(asZone).filter(Boolean) : [],
     },
   };
+}
+
+export function completedDrawingPoints(notice) {
+  const points = [];
+  for (const direction of effectiveDirections(notice)) {
+    const line = direction.path?.length >= 2
+      ? direction.path
+      : direction.points?.length >= 2
+        ? direction.points
+        : [];
+    for (const point of line) points.push(point);
+  }
+  for (const note of notice.map?.notes || []) {
+    if (Number.isFinite(note.lat) && Number.isFinite(note.lng)) points.push(note);
+    if (Number.isFinite(note.labelLat) && Number.isFinite(note.labelLng)) {
+      points.push({ lat: note.labelLat, lng: note.labelLng });
+    }
+  }
+  for (const zone of notice.map?.zones || []) {
+    const corners = zone.shape === "rect" ? rectCorners(zone.points) : (zone.points || []);
+    if (corners.length >= 3) {
+      for (const point of corners) points.push(point);
+    }
+  }
+  return points;
 }
 
 export function rectCorners(points) {

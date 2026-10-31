@@ -166,8 +166,8 @@ button { cursor: pointer; }
 }
 
 .section {
-  padding: 14px 16px 16px;
-  border-bottom: 1px solid #e3dccf;
+  padding: 16px 16px 18px;
+  border-bottom: 3px solid #161616;
 }
 
 .section h2 {
@@ -247,6 +247,35 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
+.check.fn-hl,
+.check.fn-blue {
+  align-self: flex-start;
+  border-radius: 4px;
+  padding: 3px 8px;
+  border: 1px solid #161616;
+}
+
+.check.fn-hl {
+  background: #ffe14a;
+  color: #161616;
+}
+
+.check.fn-hl:has(:checked) {
+  box-shadow: inset 0 0 0 1px #161616;
+}
+
+.check.fn-ul { text-decoration: underline; text-underline-offset: 2px; }
+
+.check.fn-blue {
+  background: #1d4e9e;
+  color: #fff;
+  font-style: italic;
+}
+
+.check.fn-blue:has(:checked) {
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
 .hint {
   margin: 0;
   color: #5c584f;
@@ -306,11 +335,78 @@ button { cursor: pointer; }
 .segment button + button { margin-left: -1px; }
 
 .segment button[aria-pressed="true"],
-.tools button[aria-pressed="true"] {
+.tools button[aria-pressed="true"]:not(.fn) {
   background: #161616;
   color: #fff;
   border-color: #161616;
 }
+
+.tools button.fn {
+  border-color: #161616;
+}
+
+.tools button.fn[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #161616;
+}
+
+.tools button.fn-pan {
+  background: #fff;
+  color: #161616;
+  border-color: #c9c2b4;
+}
+
+.tools button.fn-pan[aria-pressed="true"] {
+  background: #161616;
+  color: #fff;
+  border-color: #161616;
+}
+
+.tools button.fn-draw {
+  background: var(--line, #d50000);
+  color: var(--ink, #fff);
+}
+
+.tools button.fn-work {
+  background: #ffe14a;
+  color: #161616;
+}
+
+.tools button.fn-closed {
+  background: #d50000;
+  color: #fff;
+}
+
+.tools button.fn-temp {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.tools button.fn-label {
+  background: #1f4e79;
+  color: #fff;
+}
+
+.tools button.fn-zone-rect,
+.tools button.fn-zone-poly,
+.tools button.fn-shade {
+  background: #6e6e6e;
+  color: #fff;
+}
+
+.tools button.fn-hazard {
+  background: repeating-linear-gradient(-45deg, #d50000 0 5px, #ffe14a 5px 10px);
+  color: #161616;
+  padding: 2px;
+}
+
+.tools button.fn-hazard span {
+  display: inline-block;
+  background: #ffe14a;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.tools button.fn:hover:not(:disabled) { filter: brightness(0.94); }
 
 .prompt {
   background: #fff;
@@ -460,6 +556,12 @@ button { cursor: pointer; }
 }
 
 #map-canvas { height: 105mm; width: 100%; background: #e5e0d6; }
+
+#map-canvas.is-locked .leaflet-control-zoom a {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
 
 .visual-frame.is-photo {
   border: 0;

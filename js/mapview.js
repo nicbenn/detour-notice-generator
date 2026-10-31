@@ -1,5 +1,5 @@
 import { arrowsAlong } from "./geometry.js";
-import { effectiveDirections, rectCorners } from "./model.js";
+import { completedDrawingPoints, effectiveDirections, rectCorners } from "./model.js";
 import { escapeHtml } from "./rich.js";
 
 const L = () => window.L;
@@ -14,6 +14,8 @@ let seenFit = null;
 let rectStart = null;
 let rectLast = null;
 let rectPreview = null;
+let hold = null;
+let restoring = false;
 
 export function setMapHandlers(next) {
   handlers = next;
@@ -28,7 +30,12 @@ export function ensureMap() {
   const container = document.getElementById("map-canvas");
   if (!container) return null;
 
-  map = L().map(container, { zoomControl: false, attributionControl: true });
+  map = L().map(container, {
+    zoomControl: false,
+    attributionControl: true,
+    zoomSnap: 0,
+    zoomDelta: 1,
+  });
   L().tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "&copy; OpenStreetMap",
     maxZoom: 19,
@@ -44,6 +51,14 @@ export function ensureMap() {
   map.on("mouseup", endRectDrag);
   window.addEventListener("mouseup", endRectDrag);
   map.on("moveend", () => {
+    if (restoring) return;
+    if (hold && !viewMatches(hold)) {
+      restoring = true;
+      map.setView([hold.lat, hold.lng], hold.zoom, { animate: false });
+      restoring = false;
+      return;
+    }
+    if (hold) return;
     const center = map.getCenter();
     handlers.onView?.(center.lat, center.lng, map.getZoom());
   });
@@ -66,7 +81,10 @@ export function updateMap(notice, ui) {
   setTimeout(() => map && map.invalidateSize(), 60);
 }
 
-function syncView(notice, ui) {
+function syncView(notice) {
+  hold = notice.map.locked
+    ? { lat: notice.map.lat, lng: notice.map.lng, zoom: notice.map.zoom }
+    : null;
   if (seenFocus === null) {
     seenFocus = notice.map.focusTick;
     seenFit = notice.map.fitTick;
@@ -75,45 +93,36 @@ function syncView(notice, ui) {
   }
   if (notice.map.focusTick !== seenFocus) {
     seenFocus = notice.map.focusTick;
-    map.setView([notice.map.lat, notice.map.lng], notice.map.zoom, { animate: false });
+    if (!hold) map.setView([notice.map.lat, notice.map.lng], notice.map.zoom, { animate: false });
   }
   if (notice.map.fitTick !== seenFit) {
     seenFit = notice.map.fitTick;
-    const points = boundsPoints(notice, ui);
-    if (points.length >= 2) {
-      map.fitBounds(L().latLngBounds(points.map((point) => [point.lat, point.lng])), {
-        animate: false,
-        maxZoom: 17,
-        padding: [28, 28],
-      });
-    } else if (points.length === 1) {
-      map.setView([points[0].lat, points[0].lng], 16, { animate: false });
-    }
+    if (!hold) fitToDrawing(notice);
   }
 }
 
-function boundsPoints(notice, ui) {
-  const points = [];
-  for (const direction of effectiveDirections(notice)) {
-    const line = drawnLine(direction);
-    for (const point of line) points.push(point);
+function fitToDrawing(notice) {
+  const points = completedDrawingPoints(notice);
+  if (points.length >= 2) {
+    map.fitBounds(L().latLngBounds(points.map((point) => [point.lat, point.lng])), {
+      animate: false,
+      maxZoom: 19,
+      padding: [12, 12],
+    });
+  } else if (points.length === 1) {
+    map.setView([points[0].lat, points[0].lng], 18, { animate: false });
   }
-  for (const note of notice.map.notes || []) {
-    points.push(note);
-    if (Number.isFinite(note.labelLat) && Number.isFinite(note.labelLng)) {
-      points.push({ lat: note.labelLat, lng: note.labelLng });
-    }
-  }
-  for (const zone of notice.map.zones || []) {
-    const corners = zone.shape === "rect" ? rectCorners(zone.points) : zone.points;
-    for (const point of corners) points.push(point);
-  }
-  for (const point of ui?.draftZone?.points || []) points.push(point);
-  return points;
+}
+
+function viewMatches(view) {
+  const center = map.getCenter();
+  return Math.abs(map.getZoom() - view.zoom) < 1e-4
+    && Math.abs(center.lat - view.lat) < 1e-6
+    && Math.abs(center.lng - view.lng) < 1e-6;
 }
 
 function draw(notice, ui) {
-  syncDragging(ui);
+  syncInteraction(ui, !!notice.map.locked);
   if (!layers) return;
   layers.clearLayers();
   const editing = ui.tool === "zone-rect" || ui.tool === "zone-poly";
@@ -179,19 +188,30 @@ function draw(notice, ui) {
   map.getContainer().style.cursor = ui.tool === "pan" ? "" : "crosshair";
 }
 
-function syncDragging(ui) {
+function syncInteraction(ui, locked) {
   if (!map) return;
-  const boxing = ui.tool === "zone-rect";
-  if (boxing) {
-    if (map.dragging.enabled()) map.dragging.disable();
-  } else if (!map.dragging.enabled()) {
-    map.dragging.enable();
-  }
-  const shaping = boxing || ui.tool === "zone-poly";
-  if (shaping) {
-    if (map.doubleClickZoom.enabled()) map.doubleClickZoom.disable();
-  } else if (!map.doubleClickZoom.enabled()) {
-    map.doubleClickZoom.enable();
+  const freezePan = locked || ui.tool === "zone-rect";
+  setHandler(map.dragging, !freezePan);
+  setHandler(map.scrollWheelZoom, !locked);
+  setHandler(map.boxZoom, !locked);
+  setHandler(map.keyboard, !locked);
+  setHandler(map.touchZoom, !locked);
+  const freezeDouble = locked || ui.tool === "zone-rect" || ui.tool === "zone-poly";
+  setHandler(map.doubleClickZoom, !freezeDouble);
+  const zoom = locked && hold ? hold.zoom : null;
+  const minZoom = zoom ?? 0;
+  const maxZoom = zoom ?? 19;
+  if (Math.abs(map.getMinZoom() - minZoom) > 1e-4) map.setMinZoom(minZoom);
+  if (Math.abs(map.getMaxZoom() - maxZoom) > 1e-4) map.setMaxZoom(maxZoom);
+  map.getContainer().classList.toggle("is-locked", locked);
+}
+
+function setHandler(handler, enabled) {
+  if (!handler) return;
+  if (enabled) {
+    if (!handler.enabled()) handler.enable();
+  } else if (handler.enabled()) {
+    handler.disable();
   }
 }
 

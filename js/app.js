@@ -4,6 +4,7 @@ import {
   COLORS,
   blankNotice,
   createBlock,
+  completedDrawingPoints,
   createDirection,
   createTitleLine,
   effectiveDirections,
@@ -123,6 +124,7 @@ function syncMap() {
     zoneStyle: ui.zoneStyle,
     focus: state.map.focusTick,
     fit: state.map.fitTick,
+    locked: !!state.map.locked,
     tool: ui.tool,
     active: ui.activeDirectionId,
   });
@@ -184,6 +186,7 @@ function onChange(event) {
   else if (action === "block-bullet") updateBlock(el.dataset.group, el.dataset.id, { bullet: el.checked });
   else if (action === "thanks-blue") state = { ...state, thanksBlue: el.checked };
   else if (action === "north") state = { ...state, showNorth: el.checked };
+  else if (action === "lock-map") setMapLocked(el.checked);
   else return;
   render();
 }
@@ -228,9 +231,16 @@ function onClick(event) {
     ui.draftZone = null;
     ui.status = "Zone cancelled.";
   } else if (action === "photo-clear") state = { ...state, photo: null };
-  else if (action === "fit-lines") { fitLines(); return; }
+  else if (action === "fit-drawing") { fitDrawing(); return; }
   else return;
   render();
+}
+
+function setMapLocked(locked) {
+  state = { ...state, map: { ...state.map, locked: !!locked } };
+  ui.status = locked
+    ? "Map position locked. Zoom and location stay where they are."
+    : "Map position unlocked.";
 }
 
 function setTool(tool) {
@@ -389,14 +399,16 @@ async function generate() {
   render();
   const warnings = [];
   try {
-    try {
-      const place = await searchPlace(locality);
-      state = {
-        ...state,
-        map: { ...state.map, lat: place.lat, lng: place.lng, zoom: 15, focusTick: state.map.focusTick + 1 },
-      };
-    } catch (error) {
-      warnings.push(error.message || "Couldn’t centre the map on that area.");
+    if (!state.map.locked) {
+      try {
+        const place = await searchPlace(locality);
+        state = {
+          ...state,
+          map: { ...state.map, lat: place.lat, lng: place.lng, zoom: 15, focusTick: state.map.focusTick + 1 },
+        };
+      } catch (error) {
+        warnings.push(error.message || "Couldn’t centre the map on that area.");
+      }
     }
 
     const bias = { lat: state.map.lat, lng: state.map.lng };
@@ -426,7 +438,7 @@ async function generate() {
     state = {
       ...state,
       directions,
-      map: { ...state.map, fitTick: drew ? state.map.fitTick + 1 : state.map.fitTick },
+      map: { ...state.map, fitTick: drew && !state.map.locked ? state.map.fitTick + 1 : state.map.fitTick },
     };
     const lead = drew
       ? "Lines and arrows are on the notice. Drag a corner if a turn sits in the wrong place."
@@ -442,6 +454,11 @@ async function generate() {
 
 async function findArea() {
   if (ui.busy) return;
+  if (state.map.locked) {
+    ui.status = "Unlock the map to centre it on a place.";
+    render();
+    return;
+  }
   const locality = state.map.locality.trim();
   if (!locality) {
     ui.status = "Type a suburb, interchange, or street to centre the map.";
@@ -481,7 +498,7 @@ async function snap(id) {
     state = {
       ...state,
       directions: state.directions.map((item) => item.id === id ? { ...item, path } : item),
-      map: { ...state.map, fitTick: state.map.fitTick + 1 },
+      map: { ...state.map, fitTick: state.map.locked ? state.map.fitTick : state.map.fitTick + 1 },
     };
     ui.status = "That line now follows the roads.";
   } catch {
@@ -492,16 +509,19 @@ async function snap(id) {
   }
 }
 
-function fitLines() {
-  const points = effectiveDirections(state).some((direction) => (direction.path?.length || direction.points?.length || 0) >= 1)
-    || state.map.notes.length > 0
-    || (state.map.zones || []).length > 0;
-  if (!points) {
-    ui.status = "There’s nothing on the map to zoom to yet.";
+function fitDrawing() {
+  if (state.map.locked) {
+    ui.status = "Unlock the map to fit it to the drawing.";
+    render();
+    return;
+  }
+  if (!completedDrawingPoints(state).length) {
+    ui.status = "There’s nothing finished on the map to fit to yet.";
     render();
     return;
   }
   state = { ...state, map: { ...state.map, fitTick: state.map.fitTick + 1 } };
+  ui.status = "Map fitted to the drawing.";
   render();
 }
 
@@ -691,7 +711,8 @@ function moveNoteLabel(id, lat, lng) {
 }
 
 function onView(lat, lng, zoom) {
-  if (Math.abs(state.map.lat - lat) < 1e-6 && Math.abs(state.map.lng - lng) < 1e-6 && state.map.zoom === zoom) return;
+  if (state.map.locked) return;
+  if (Math.abs(state.map.lat - lat) < 1e-6 && Math.abs(state.map.lng - lng) < 1e-6 && Math.abs(state.map.zoom - zoom) < 1e-4) return;
   state = { ...state, map: { ...state.map, lat, lng, zoom } };
   scheduleSave(state);
 }
