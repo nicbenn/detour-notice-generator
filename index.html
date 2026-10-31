@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Detour Notice Generator</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header no-print">
+      <div>
+        <h1>Detour Notice Generator</h1>
+        <p>Driver notices, with each direction on a map or a picture.</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn secondary" data-action="blank">Blank</button>
+        <button type="button" class="btn secondary" data-action="example">Example</button>
+        <button type="button" class="btn secondary" data-action="export">Download</button>
+        <button type="button" class="btn secondary" data-action="import-pick">Open</button>
+        <button type="button" class="btn print" data-action="print" title="Turn on background graphics so the map and yellow highlights print.">Print</button>
+      </div>
+    </header>
+    <input id="import-file" type="file" accept="application/json,.json" hidden>
+    <div class="layout">
+      <section id="editor" class="editor" aria-label="Notice details"></section>
+      <section class="preview-column" aria-label="Notice preview">
+        <p class="preview-label no-print">Notice preview</p>
+        <article class="sheet" id="sheet">
+          <header class="masthead">
+            <div class="org" id="out-org"></div>
+            <div class="banner" id="out-banner"></div>
+          </header>
+          <div class="title-box" id="out-title"></div>
+          <div id="out-before"></div>
+          <div id="out-intro"></div>
+          <ul id="out-dirs"></ul>
+          <div id="out-after"></div>
+          <div class="visual-frame" id="visual-frame">
+            <div id="map-canvas"></div>
+            <div class="north-rose" id="north-rose" aria-hidden="true"><b>N</b></div>
+            <p id="map-hint" class="map-hint no-print">No lines yet. Generate them from the directions, or choose Draw route and click the map.</p>
+            <img id="photo-view" alt="Picture on the notice" hidden>
+            <p class="photo-empty no-print">Picture will appear here</p>
+          </div>
+          <p class="thanks" id="out-thanks" hidden></p>
+          <footer class="signoff" id="out-signoff"></footer>
+        </article>
+      </section>
+    </div>
+  </div>
+  <noscript>This generator needs JavaScript.</noscript>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

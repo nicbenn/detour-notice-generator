@@ -1,0 +1,6 @@
+{
+  "name": "detour-notice-generator",
+  "private": true,
+  "type": "module",
+  "description": "Printable driver detour notices with a map or a picture."
+}
