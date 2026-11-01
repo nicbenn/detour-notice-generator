@@ -1,5 +1,5 @@
 import { editorHtml } from "./editor.js";
-import { ensureMap, getMap, setMapHandlers, updateMap } from "./mapview.js";
+import { ensureMap, getMap, prepareMapForPrint, restoreMapAfterPrint, setMapHandlers, updateMap } from "./mapview.js";
 import {
   COLORS,
   blankNotice,
@@ -22,6 +22,7 @@ let state;
 let ui;
 let pendingCaret = null;
 let mapSig = "";
+let printBusy = false;
 
 function init() {
   const stored = loadNotice(hydrate);
@@ -66,6 +67,18 @@ function init() {
   window.addEventListener("beforeprint", () => {
     const map = getMap();
     if (map && state.visual === "map") map.invalidateSize();
+  });
+  window.addEventListener("afterprint", () => {
+    restoreMapAfterPrint();
+    const map = getMap();
+    if (map && state.visual === "map") map.invalidateSize();
+    endPrintWait();
+  });
+  window.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
+      event.preventDefault();
+      printNotice();
+    }
   });
 
   render();
@@ -805,10 +818,33 @@ function importNotice(file) {
   reader.readAsText(file);
 }
 
-function printNotice() {
-  const map = getMap();
-  if (map && state.visual === "map") map.invalidateSize();
-  setTimeout(() => window.print(), 80);
+function setPrintButton(label, disabled) {
+  const button = document.querySelector("[data-action=print]");
+  if (!button) return;
+  button.textContent = label;
+  button.disabled = disabled;
+}
+
+function endPrintWait() {
+  printBusy = false;
+  setPrintButton("Print", false);
+}
+
+async function printNotice() {
+  if (printBusy) return;
+  printBusy = true;
+  const sharpen = state.visual === "map" && getMap();
+  setPrintButton(sharpen ? "Preparing…" : "Print", true);
+  try {
+    if (sharpen) {
+      getMap().invalidateSize();
+      await prepareMapForPrint();
+    }
+    window.print();
+  } catch {
+    restoreMapAfterPrint();
+    endPrintWait();
+  }
 }
 
 init();

@@ -734,6 +734,10 @@ button { cursor: pointer; }
   font-synthesis: none;
 }
 
+.map-tiles-print .leaflet-tile {
+  opacity: 1 !important;
+}
+
 .leaflet-control-attribution {
   font-size: 9px !important;
   background: rgba(255, 255, 255, 0.8) !important;
@@ -769,6 +773,8 @@ button { cursor: pointer; }
   }
 
   .leaflet-control-zoom, .vertex-icon, .map-hint { display: none !important; }
+
+  .leaflet-container.is-print-sharp .map-tiles-screen { display: none !important; }
 
   .visual-frame, #map-canvas { break-inside: avoid; }
 

@@ -4,9 +4,12 @@ import { escapeHtml } from "./rich.js";
 
 const L = () => window.L;
 const SVG_NS = "http://www.w3.org/2000/svg";
+const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const OSM_MAX_ZOOM = 19;
 
 let map = null;
 let layers = null;
+let printTiles = null;
 let handlers = {};
 let last = null;
 let seenFocus = null;
@@ -36,9 +39,10 @@ export function ensureMap() {
     zoomSnap: 0,
     zoomDelta: 1,
   });
-  L().tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  L().tileLayer(OSM_TILES, {
     attribution: "&copy; OpenStreetMap",
-    maxZoom: 19,
+    maxZoom: OSM_MAX_ZOOM,
+    className: "map-tiles-screen",
     crossOrigin: true,
   }).addTo(map);
   L().control.zoom({ position: "topright" }).addTo(map);
@@ -71,6 +75,73 @@ export function ensureMap() {
 
 export function invalidateMap() {
   if (map) map.invalidateSize();
+}
+
+// Print-to-PDF keeps each tile's own pixels. A 256px tile stretched across the
+// page looks soft, while the route lines stay sharp. Finer zoom tiles, drawn
+// smaller, give the basemap two or four times as many pixels in the same frame.
+export function printTileOptions(zoom) {
+  const tileZoom = Math.round(zoom);
+  const zoomOffset = Math.max(0, Math.min(2, OSM_MAX_ZOOM - tileZoom));
+  return {
+    url: OSM_TILES,
+    tileSize: 256 / (2 ** zoomOffset),
+    zoomOffset,
+    maxZoom: OSM_MAX_ZOOM,
+  };
+}
+
+export function prepareMapForPrint() {
+  if (!map) return Promise.resolve();
+  const options = printTileOptions(map.getZoom());
+  restoreMapAfterPrint();
+  if (!options.zoomOffset) return Promise.resolve();
+
+  let degraded = false;
+  const layer = L().tileLayer(options.url, {
+    maxZoom: options.maxZoom,
+    tileSize: options.tileSize,
+    zoomOffset: options.zoomOffset,
+    className: "map-tiles-print",
+    crossOrigin: true,
+    keepBuffer: 2,
+  });
+  printTiles = layer;
+  layer.on("tileerror", (event) => {
+    degraded = true;
+    if (event.tile) event.tile.style.visibility = "hidden";
+  });
+  const ready = whenTilesLoaded(layer);
+  layer.addTo(map);
+  layer.bringToFront();
+  return ready.then(() => {
+    if (map && printTiles === layer && !degraded) {
+      map.getContainer().classList.add("is-print-sharp");
+    }
+  });
+}
+
+export function restoreMapAfterPrint() {
+  if (printTiles && map) {
+    map.removeLayer(printTiles);
+  }
+  printTiles = null;
+  map?.getContainer().classList.remove("is-print-sharp");
+}
+
+function whenTilesLoaded(layer) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      layer.off("load", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 8000);
+    layer.on("load", finish);
+  });
 }
 
 export function updateMap(notice, ui) {

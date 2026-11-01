@@ -75,7 +75,7 @@ export function editorHtml(notice, ui) {
         ${field("Date of issue", `<input id="issue-date" type="date" data-action="issue-date" value="${escapeHtml(notice.issueDate)}">`)}
         ${field("Name", `<input id="officer" type="text" data-action="officer" value="${escapeHtml(notice.officer)}" placeholder="Name" autocomplete="off">`)}
         ${field("Role", `<input id="role" type="text" data-action="role" value="${escapeHtml(notice.role)}" placeholder="Regional Field Officer" autocomplete="off">`)}
-        <p class="hint">Print opens the browser’s print dialog. Turn on background graphics so the yellow, the black header, and the map are included. Choose Save as PDF for a file.</p>
+        <p class="hint">Print redraws the map in finer detail, then opens the browser’s print dialog. Turn on background graphics so the yellow, the black header, and the map are included. Choose Save as PDF for a file.</p>
       </div>
     </section>
   `;
