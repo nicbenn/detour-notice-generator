@@ -5,6 +5,7 @@ import { escapeHtml } from "./rich.js";
 const L = () => window.L;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const PRINT_TILES = "https://tile.osmand.net/hd/{z}/{x}/{y}.png";
 const OSM_MAX_ZOOM = 19;
 
 let map = null;
@@ -77,33 +78,29 @@ export function invalidateMap() {
   if (map) map.invalidateSize();
 }
 
-// Print-to-PDF keeps each tile's own pixels. A 256px tile stretched across the
-// page looks soft, while the route lines stay sharp. Finer zoom tiles, drawn
-// smaller, give the basemap two or four times as many pixels in the same frame.
-export function printTileOptions(zoom) {
-  const tileZoom = Math.round(zoom);
-  const zoomOffset = Math.max(0, Math.min(2, OSM_MAX_ZOOM - tileZoom));
+// Print-to-PDF keeps each tile's own pixels. These are the same zoom as the
+// on-screen map, so the roads stay the same size, but each tile is 512px.
+export function printTileOptions() {
   return {
-    url: OSM_TILES,
-    tileSize: 256 / (2 ** zoomOffset),
-    zoomOffset,
+    url: PRINT_TILES,
+    tileSize: 256,
+    zoomOffset: 0,
     maxZoom: OSM_MAX_ZOOM,
   };
 }
 
 export function prepareMapForPrint() {
   if (!map) return Promise.resolve();
-  const options = printTileOptions(map.getZoom());
+  const options = printTileOptions();
   restoreMapAfterPrint();
-  if (!options.zoomOffset) return Promise.resolve();
 
   let degraded = false;
   const layer = L().tileLayer(options.url, {
+    attribution: "&copy; OsmAnd",
     maxZoom: options.maxZoom,
     tileSize: options.tileSize,
     zoomOffset: options.zoomOffset,
     className: "map-tiles-print",
-    crossOrigin: true,
     keepBuffer: 2,
   });
   printTiles = layer;

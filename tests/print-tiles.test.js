@@ -1,21 +1,10 @@
 import assert from "node:assert/strict";
 import { printTileOptions } from "../js/mapview.js";
 
-const street = printTileOptions(16);
-assert.equal(street.zoomOffset, 2);
-assert.equal(street.tileSize, 64);
-assert.equal(street.maxZoom, 19);
-assert.match(street.url, /\{z\}\/\{x\}\/\{y\}\.png$/);
-
-assert.equal(printTileOptions(17).zoomOffset, 2);
-assert.equal(printTileOptions(17).tileSize, 64);
-
-assert.equal(printTileOptions(18).zoomOffset, 1);
-assert.equal(printTileOptions(18).tileSize, 128);
-
-assert.equal(printTileOptions(18.4).zoomOffset, 1);
-assert.equal(printTileOptions(18.5).zoomOffset, 0);
-assert.equal(printTileOptions(18.5).tileSize, 256);
-
-assert.equal(printTileOptions(19).zoomOffset, 0);
-assert.equal(printTileOptions(12).zoomOffset, 2);
+for (const zoom of [12, 16, 17, 18, 18.4, 18.5, 19]) {
+  const options = printTileOptions(zoom);
+  assert.equal(options.zoomOffset, 0, `zoom ${zoom} must keep the on-screen scale`);
+  assert.equal(options.tileSize, 256, `zoom ${zoom} must use the same tile size`);
+  assert.equal(options.maxZoom, 19);
+  assert.match(options.url, /osmand\.net\/hd\/\{z\}\/\{x\}\/\{y\}\.png$/);
+}
